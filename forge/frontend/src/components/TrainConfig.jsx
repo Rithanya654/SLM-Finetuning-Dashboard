@@ -176,7 +176,7 @@ function DatasetAnalyzer({ dataset, modelId, gpu, quantization, onApply }) {
         <div className="stack-md">
           <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0, lineHeight: 1.6 }}>
             Analyses your dataset structure (row count, token lengths, field density) using Python — without sending your data to an LLM.
-            Then Gemini recommends safe hyperparameters for your chosen model and GPU.
+            Then recommends safe hyperparameters for your chosen model and GPU.
           </p>
 
           {!dataset && (
@@ -228,7 +228,7 @@ function DatasetAnalyzer({ dataset, modelId, gpu, quantization, onApply }) {
                   width: '40%',
                 }} />
               </div>
-              <div style={{ marginTop: '.5rem', fontSize: 12 }}>Then asking Gemini for safe parameter recommendations…</div>
+              <div style={{ marginTop: '.5rem', fontSize: 12 }}>Then generating safe parameter recommendations…</div>
             </div>
           )}
 
@@ -260,7 +260,7 @@ function DatasetAnalyzer({ dataset, modelId, gpu, quantization, onApply }) {
               {/* Gemini recommendation */}
               {result.recommendation && (
                 <div>
-                  <SectionLabel>Gemini Recommendations</SectionLabel>
+                  <SectionLabel>Parameter Recommendations</SectionLabel>
                   <div style={{
                     background: 'rgba(124,156,255,0.05)', border: '1px solid rgba(124,156,255,0.2)',
                     borderRadius: 14, padding: '14px 16px',

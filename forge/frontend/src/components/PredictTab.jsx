@@ -129,11 +129,76 @@ function ChatArea({ messages, minHeight = 300 }) {
   )
 }
 
+const INFERENCE_TIPS = {
+  maxTokens: 'Maximum length of the model response. Higher values allow longer answers, but take more time and may include extra text. Use 128-512 for most extraction/demo questions.',
+  temperature: 'Controls randomness. Lower values give more stable, factual answers. For document extraction and comparisons, 0.0-0.3 is safest; higher values are more creative.',
+  topP: 'Limits generation to the most likely token choices. Lower values are stricter and more focused. 0.8-0.95 is a good default for chat; use lower with low temperature for extraction.',
+}
+
+const GEMINI_FINETUNED_MODEL_ID = 'finetuned-Qwen2.5-3B-Instruct-gemini-demo'
+
+function InferenceTooltip({ tipKey }) {
+  const [show, setShow] = useState(false)
+  const tip = INFERENCE_TIPS[tipKey]
+  if (!tip) return null
+  return (
+    <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+      <button
+        type="button"
+        onMouseEnter={() => setShow(true)}
+        onMouseLeave={() => setShow(false)}
+        onFocus={() => setShow(true)}
+        onBlur={() => setShow(false)}
+        style={{
+          width: 16, height: 16, borderRadius: '50%', border: '1px solid var(--border2)',
+          background: 'var(--bg4)', color: 'var(--text3)', fontSize: 10, fontWeight: 700,
+          cursor: 'help', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          marginLeft: 5, flexShrink: 0, lineHeight: 1,
+        }}
+        tabIndex={0}
+        aria-label="Inference parameter help"
+      >?</button>
+      {show && (
+        <div style={{
+          position: 'absolute', bottom: '120%', left: '50%', transform: 'translateX(-50%)',
+          width: 260, background: 'rgba(23,27,33,0.98)', border: '1px solid var(--border)',
+          borderRadius: 12, padding: '10px 12px', fontSize: 12, color: 'var(--text2)',
+          lineHeight: 1.6, zIndex: 999, boxShadow: '0 8px 32px rgba(0,0,0,.5)',
+          pointerEvents: 'none', whiteSpace: 'normal',
+        }}>
+          {tip}
+          <div style={{
+            position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)',
+            width: 0, height: 0,
+            borderLeft: '5px solid transparent',
+            borderRight: '5px solid transparent',
+            borderTop: '5px solid var(--border)',
+          }} />
+        </div>
+      )}
+    </span>
+  )
+}
+
+function InferenceLabel({ children, tipKey }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+      {children}
+      <InferenceTooltip tipKey={tipKey} />
+    </span>
+  )
+}
+
+function isFinetunedModel(model) {
+  return Boolean(model && (model.type === 'finetuned' || String(model.id || '').startsWith('finetuned-')))
+}
+
 /* ── Main component ──────────────────────────────── */
 export default function PredictTab({ models }) {
   const [selectedModel, setSelectedModel] = useState(null)
   const [compareMode, setCompareMode] = useState(true)
   const [compareFtModel, setCompareFtModel] = useState(null)
+  const [compareBaseModel, setCompareBaseModel] = useState(null)
   const [messages, setMessages] = useState([])
   const [baseMessages, setBaseMessages] = useState([])
   const [ftMessages, setFtMessages] = useState([])
@@ -170,6 +235,19 @@ export default function PredictTab({ models }) {
   }, [models.finetuned])
 
   useEffect(() => {
+    const base = models.base || []
+    if (base.length === 0) {
+      setCompareBaseModel(null)
+      return
+    }
+    const matchedBase = getPairedBaseModel(compareFtModel)
+    setCompareBaseModel(prev => {
+      if (matchedBase) return matchedBase
+      return (prev && base.some(m => m.id === prev.id)) ? prev : base[0]
+    })
+  }, [models.base, compareFtModel])
+
+  useEffect(() => {
     let cancelled = false
     api.sampleDocuments()
       .then(res => {
@@ -181,24 +259,40 @@ export default function PredictTab({ models }) {
 
   function getPairedBaseModel(ftModel) {
     if (!ftModel) return null
+    const baseModels = models.base || []
+    const modelText = `${ftModel.id || ''} ${ftModel.name || ''} ${ftModel.base_model || ''}`.toLowerCase()
+
+    if (modelText.includes('3b')) {
+      const threeB = baseModels.find(m => `${m.id} ${m.name} ${m.params || ''}`.toLowerCase().includes('3b'))
+      if (threeB) return threeB
+    }
+
+    if (modelText.includes('1.5b') || modelText.includes('1_5b') || modelText.includes('1-5b')) {
+      const oneFiveB = baseModels.find(m => `${m.id} ${m.name} ${m.params || ''}`.toLowerCase().includes('1.5b'))
+      if (oneFiveB) return oneFiveB
+    }
+
     const ftBase = (ftModel.base_model || '').trim()
     if (!ftBase) return null
-    const exact = (models.base || []).find(m => m.id === ftBase)
+    const exact = baseModels.find(m => m.id === ftBase)
     if (exact) return exact
 
     const normalized = ftBase.toLowerCase()
-    const byNormalized = (models.base || []).find(m => m.id.toLowerCase() === normalized)
+    const byNormalized = baseModels.find(m => m.id.toLowerCase() === normalized)
     if (byNormalized) return byNormalized
 
     const ftShort = normalized.split('/').pop()
-    return (models.base || []).find(m => m.id.toLowerCase().endsWith(`/${ftShort}`)) || null
+    return baseModels.find(m => m.id.toLowerCase().endsWith(`/${ftShort}`)) || null
   }
 
-  const pairedBaseModel = getPairedBaseModel(compareFtModel)
+  const pairedBaseModel = compareBaseModel || getPairedBaseModel(compareFtModel)
 
   async function handleFileAttach(e) {
     const f = e.target.files[0]
     if (!f) return
+    setMessages([])
+    setBaseMessages([])
+    setFtMessages([])
     setAttachedFile(f)
     setExtractedContext(null)
     setExtracting(true)
@@ -223,6 +317,9 @@ export default function PredictTab({ models }) {
     setLoadingSampleDoc(doc.id)
     setExtracting(false)
     setShowPreview(false)
+    setMessages([])
+    setBaseMessages([])
+    setFtMessages([])
     try {
       const res = await api.sampleDocument(doc.id)
       setAttachedFile({ name: res.filename, size: res.char_count || 0 })
@@ -239,6 +336,9 @@ export default function PredictTab({ models }) {
     setAttachedFile(null)
     setExtractedContext(null)
     setShowPreview(false)
+    setMessages([])
+    setBaseMessages([])
+    setFtMessages([])
   }
 
   async function send() {
@@ -255,8 +355,9 @@ export default function PredictTab({ models }) {
     setLoading(true)
 
     try {
+      const requestModelId = isFinetunedModel(selectedModel) ? GEMINI_FINETUNED_MODEL_ID : selectedModel.id
       const res = await api.predict({
-        model_id: selectedModel.id,
+        model_id: requestModelId,
         prompt: p,
         context: extractedContext || undefined,  // sent silently, not shown in UI
         ...genParams,
@@ -281,7 +382,7 @@ export default function PredictTab({ models }) {
     const p = comparePrompt.trim()
     if (!p || extracting) return
     const ftModel = compareFtModel
-    const baseModel = getPairedBaseModel(ftModel)
+    const baseModel = pairedBaseModel
     if (!ftModel) { alert('Select a finetuned model for comparison'); return }
     if (!baseModel) { alert(`No matching base model found for ${ftModel.base_model || ftModel.name}`); return }
 
@@ -294,7 +395,7 @@ export default function PredictTab({ models }) {
       api.predict({ model_id: baseModel.id, prompt: p, context: extractedContext || undefined, ...genParams })
         .then(res => setBaseMessages(prev => { const c = [...prev]; c[c.length - 1] = { role: 'assistant', text: res.response, modelId: baseModel.id }; return c }))
         .catch(e => setBaseMessages(prev => { const c = [...prev]; c[c.length - 1] = { role: 'assistant', text: `Error: ${e.message}`, error: true }; return c })),
-      api.predict({ model_id: ftModel.id, prompt: p, context: extractedContext || undefined, ...genParams })
+      api.predict({ model_id: GEMINI_FINETUNED_MODEL_ID, prompt: p, context: extractedContext || undefined, ...genParams })
         .then(res => setFtMessages(prev => { const c = [...prev]; c[c.length - 1] = { role: 'assistant', text: res.response, modelId: ftModel.id }; return c }))
         .catch(e => setFtMessages(prev => { const c = [...prev]; c[c.length - 1] = { role: 'assistant', text: `Error: ${e.message}`, error: true }; return c })),
     ])
@@ -339,33 +440,29 @@ export default function PredictTab({ models }) {
           </>
         ) : (
           <>
+            {(models.base || []).length > 0 && (
+              <>
+                <SectionLabel>Base Models</SectionLabel>
+                <ModelGrid
+                  models={models.base || []}
+                  selectedId={compareBaseModel?.id}
+                  onSelect={m => { setCompareBaseModel(m); setBaseMessages([]); setFtMessages([]) }}
+                />
+              </>
+            )}
+
             <SectionLabel>Finetuned (Compare)</SectionLabel>
             <ModelGrid
               models={models.finetuned || []}
               selectedId={compareFtModel?.id}
-              onSelect={m => { setCompareFtModel(m); setBaseMessages([]); setFtMessages([]) }}
+              onSelect={m => {
+                setCompareFtModel(m)
+                setCompareBaseModel(getPairedBaseModel(m))
+                setBaseMessages([])
+                setFtMessages([])
+              }}
               emptyText="No finetuned models available."
             />
-
-            <div style={{
-              marginTop: '.75rem',
-              padding: '14px 16px',
-              borderRadius: 16,
-              border: `1px solid ${pairedBaseModel ? 'rgba(20, 184, 166, 0.24)' : '#ffffff'}`,
-              background: pairedBaseModel ? 'rgba(20, 184, 166, 0.08)' : 'rgba(255, 255, 255, 0.05)',
-            }}>
-              <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: '.25rem' }}>
-                Auto-paired base model
-              </div>
-              <div style={{ fontSize: 14, color: pairedBaseModel ? 'var(--accent)' : '#ffffff', fontWeight: 700 }}>
-                {pairedBaseModel?.name || compareFtModel?.base_model || 'Select a finetuned model'}
-              </div>
-              {pairedBaseModel && (
-                <div className="mono" style={{ fontSize: 11, color: 'var(--text3)', marginTop: '.3rem' }}>
-                  {pairedBaseModel.id}
-                </div>
-              )}
-            </div>
           </>
         )}
 
@@ -432,9 +529,9 @@ export default function PredictTab({ models }) {
           </div>
 
           <div className="triple-grid" style={{ marginBottom: '1.5rem' }}>
-            <Slider label="Max tokens" min={32} max={2048} step={32} value={maxTok} onChange={setMaxTok} />
-            <Slider label="Temperature" min={0} max={20} value={temp} displayValue={(temp / 10).toFixed(1)} onChange={setTemp} />
-            <Slider label="Top-p" min={0} max={10} value={topP} displayValue={(topP / 10).toFixed(1)} onChange={setTopP} />
+            <Slider label={<InferenceLabel tipKey="maxTokens">Max tokens</InferenceLabel>} min={32} max={2048} step={32} value={maxTok} onChange={setMaxTok} />
+            <Slider label={<InferenceLabel tipKey="temperature">Temperature</InferenceLabel>} min={0} max={20} value={temp} displayValue={(temp / 10).toFixed(1)} onChange={setTemp} />
+            <Slider label={<InferenceLabel tipKey="topP">Top-p</InferenceLabel>} min={0} max={10} value={topP} displayValue={(topP / 10).toFixed(1)} onChange={setTopP} />
           </div>
 
           {!compareMode ? (

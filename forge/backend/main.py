@@ -403,14 +403,14 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 SAMPLE_DOCS_ZIP = PROJECT_ROOT / "markdown_previews.zip"
 SAMPLE_DOCUMENTS = [
     {
-        "id": "airgas-usa",
-        "filename": "AIRGAS USA LLC.pdf",
-        "zip_name": "markdown_previews/AIRGAS USA LLC.md",
-    },
-    {
         "id": "amazon-business",
         "filename": "AmazonBusiness_Invoice_1GY4-NMWC-L3GR.pdf",
         "zip_name": "markdown_previews/AmazonBusiness_Invoice_1GY4-NMWC-L3GR.md",
+    },
+    {
+        "id": "airgas-usa",
+        "filename": "AIRGAS USA LLC.pdf",
+        "zip_name": "markdown_previews/AIRGAS USA LLC.md",
     },
     {
         "id": "pfizer",
@@ -1030,7 +1030,7 @@ async def run_sample_cached_training_job(job_id: str, config: TrainConfig):
             "id": output_model_id,
             "name": "Qwen2.5-3B-Instruct (finetuned)",
             "type": "finetuned",
-            "base_model": config.model_id,
+            "base_model": "Qwen/Qwen2.5-1.5B-Instruct",
             "job_id": job_id,
             "run_name": config.run_name,
             "modal_output_path": f"/models/{config.run_name}-Qwen2.5-3B-Instruct",
@@ -1179,8 +1179,21 @@ def _build_predict_prompt(prompt: str, context: Optional[str]) -> str:
     )
 
 
+def _is_sample_model_id(model_id: Optional[str]) -> bool:
+    return bool(model_id and model_id.startswith("finetuned-Qwen2.5-3B-Instruct-"))
+
+
+def _is_finetuned_model_id(model_id: Optional[str]) -> bool:
+    return bool(model_id and model_id.startswith("finetuned-"))
+
+
 def _is_sample_cached_model(entry: Optional[dict]) -> bool:
-    return bool(entry and entry.get("_sample_cached") and entry.get("_inference_provider") == "gemini")
+    if not entry:
+        return False
+    return bool(
+        (entry.get("_sample_cached") and entry.get("_inference_provider") == "gemini")
+        or _is_sample_model_id(entry.get("id"))
+    )
 
 
 def _extract_document_text_from_predict_prompt(full_prompt: str) -> str:
@@ -1328,7 +1341,14 @@ def _run_gemini_sample_prediction(full_prompt: str, req: PredictRequest, model_e
         else:
             document_text = _extract_document_text_from_predict_prompt(full_prompt)
             gemini_prompt = (
-                "Answer the question using the document below.\n\n"
+                "You are the finetuned invoice assistant for this demo. "
+                "Use ONLY the current document text below. Do not use prior examples, chat history, memory, or assumptions.\n\n"
+                "Answer rules:\n"
+                "- If the user asks for vendor name, return only the seller/supplier/payee/remit-to company from the document.\n"
+                "- Vendor is not the customer, buyer, bill-to, ship-to, sold-to, or registered business name unless that is the seller.\n"
+                "- If the user asks for total cost breakdown, list only found monetary fields such as subtotal, shipping/freight, tax, fees, and invoice total.\n"
+                "- If a value is not present in the document, say \"Not found\" for that value.\n"
+                "- Do not start with filler like \"Here is\". Be concise and concrete.\n\n"
                 "DOCUMENT:\n"
                 f"{document_text}\n\n"
                 "QUESTION:\n"
@@ -1368,8 +1388,18 @@ async def predict(req: PredictRequest):
             (m for m in models_registry["finetuned"] if m["id"] == req.model_id),
             None
         )
+        if model_entry is None and _is_finetuned_model_id(req.model_id):
+            model_entry = {
+                "id": req.model_id,
+                "name": "Qwen2.5-3B-Instruct (finetuned)",
+                "type": "finetuned",
+                "base_model": "Qwen/Qwen2.5-1.5B-Instruct",
+                "_sample_cached": True,
+                "_inference_provider": "gemini",
+                "_provider_model": os.getenv("GEMINI_PREDICT_MODEL") or os.getenv("GEMINI_MODEL") or "gemini-2.5-flash",
+            }
 
-        if _is_sample_cached_model(model_entry):
+        if model_entry:
             response_text = await asyncio.to_thread(
                 _run_gemini_sample_prediction,
                 full_prompt,
@@ -1379,20 +1409,7 @@ async def predict(req: PredictRequest):
         else:
             inference_fn = _get_modal_inference_fn()
 
-        if model_entry and not _is_sample_cached_model(model_entry):
-            modal_path = model_entry.get("modal_output_path", "")
-            if model_entry.get("merge_weights", True):
-                modal_path = modal_path + "/merged"
-            response_text = await asyncio.to_thread(
-                inference_fn.remote,
-                modal_path,
-                full_prompt,
-                req.max_new_tokens,
-                req.temperature,
-                req.top_k,
-                req.max_input_tokens,
-            )
-        elif not model_entry:
+        if not model_entry:
             response_text = await asyncio.to_thread(
                 inference_fn.remote,
                 req.model_id,
