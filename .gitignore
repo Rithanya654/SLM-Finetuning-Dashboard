@@ -1,0 +1,55 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+forge/backend/.env
+forge/backend/.env.*
+!forge/backend/.env.example
+
+# Python runtime/cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+venv/
+.venv/
+forge/backend/venv/
+
+# Node/runtime build deps
+node_modules/
+forge/frontend/node_modules/
+
+# Generated build output
+dist/
+forge/frontend/dist/
+
+# Runtime data and logs
+*.log
+backend.log
+forge/backend/backend.log
+forge/backend/uploads/
+forge/backend/models_registry_cache.json
+forge/deploy/
+
+# Old/duplicate source snapshots not wired by the app
+*_old.jsx
+*_v1.jsx
+forge/backend/main_v1.py
+forge/backend/diag.py
+forge/backend/backfill_finetuned_metrics.py
+forge/backend/prune_finetuned_runs.py
+
+# Local experiment/results files
+eval_result_*.json
+eval_results_*.csv
+dataset*.jsonl
+dataset*.csv
+dataset*.zip
+dataset-eval/
+old_f/
+
+# Keep the sample/demo assets that are wired in code
+!training_data.jsonl
+!eval_data.jsonl
+!markdown_previews.zip
